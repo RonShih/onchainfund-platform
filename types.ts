@@ -22,6 +22,8 @@ export type VaultData = {
   performanceFeeEnabled: boolean;
   performanceFeeRate: number;
   entranceFeeEnabled: boolean;
+  entranceFeeRate: number;
+  entranceFeeRecipient: string;
   exitFeeEnabled: boolean;
 };
 

@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { ethers, BrowserProvider, Log } from 'ethers';
 import { Input, Button, ToggleSwitch, Select } from './ui';
 import Stepper from './Stepper';
-import { CREATION_STEPS, FUND_FACTORY_ADDRESS, FUND_FACTORY_ABI, DENOMINATION_ASSETS, DEFAULT_DENOMINATION_ASSET } from '../constants';
+import { CREATION_STEPS, FUND_FACTORY_ADDRESS, FUND_FACTORY_ABI, DENOMINATION_ASSETS, DEFAULT_DENOMINATION_ASSET, ENTRACE_RATE_DIRECT_FEE_ADDRESS } from '../constants';
 import type { VaultData, EthersError } from '../types';
 
 interface CreateVaultFormProps {
@@ -24,6 +24,8 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
         performanceFeeEnabled: true,
         performanceFeeRate: 10,
         entranceFeeEnabled: false,
+        entranceFeeRate: 1,
+        entranceFeeRecipient: account,
         exitFeeEnabled: false,
     });
     const [isLoading, setIsLoading] = useState(false);
@@ -42,6 +44,35 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
     const handleToggleChange = (name: keyof VaultData, enabled: boolean) => {
         setFormData(prev => ({ ...prev, [name]: enabled }));
     };
+
+    // 構建 FeeManager 配置數據
+    const buildFeeManagerConfigData = useCallback(() => {
+        if (!formData.entranceFeeEnabled) {
+            return '0x';
+        }
+
+        try {
+            // EntranceRateDirectFee 設定: abi.encode(uint256 rate, address recipient)
+            const rate = Math.floor(formData.entranceFeeRate * 100); // 1% = 100 (基於 10000)
+            const recipient = formData.entranceFeeRecipient || account;
+            
+            const entranceFeeSettings = ethers.AbiCoder.defaultAbiCoder().encode(
+                ['uint256', 'address'],
+                [rate, recipient]
+            );
+
+            // FeeManager 配置: abi.encode(address[] feeAddresses, bytes[] feeSettings)
+            const feeManagerConfigData = ethers.AbiCoder.defaultAbiCoder().encode(
+                ['address[]', 'bytes[]'],
+                [[ENTRACE_RATE_DIRECT_FEE_ADDRESS], [entranceFeeSettings]]
+            );
+
+            return feeManagerConfigData;
+        } catch (error) {
+            console.error('構建費用配置時出錯:', error);
+            return '0x';
+        }
+    }, [formData.entranceFeeEnabled, formData.entranceFeeRate, formData.entranceFeeRecipient, account]);
 
     const handleCreateVault = useCallback(async () => {
         console.log('開始創建金庫...');
@@ -63,6 +94,12 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
             if (!ethers.isAddress(formData.denominationAsset)) {
                 throw new Error('無效的計價資產地址');
             }
+
+            // 構建費用配置數據
+            const feeManagerConfigData = buildFeeManagerConfigData();
+            const policyManagerConfigData = '0x'; // 暫時保持為空
+            
+            console.log('費用配置數據:', feeManagerConfigData);
             
             console.log('創建合約調用...');
             console.log('Factory 地址:', FUND_FACTORY_ADDRESS);
@@ -72,8 +109,8 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
                 fundSymbol: formData.symbol,
                 denominationAsset: formData.denominationAsset,
                 sharesActionTimelock: formData.sharesLockUp * 3600,
-                feeManagerConfigData: '0x',
-                policyManagerConfigData: '0x'
+                feeManagerConfigData,
+                policyManagerConfigData
             });
             
             // 預估 Gas
@@ -83,8 +120,8 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
                 formData.symbol,
                 formData.denominationAsset,
                 formData.sharesLockUp * 3600,
-                '0x',
-                '0x'
+                feeManagerConfigData,
+                policyManagerConfigData
             );
             
             console.log('Gas 預估:', gasEstimate.toString());
@@ -95,8 +132,8 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
                 formData.symbol,
                 formData.denominationAsset,
                 formData.sharesLockUp * 3600,
-                '0x', // feeManagerConfigData
-                '0x', // policyManagerConfigData
+                feeManagerConfigData,
+                policyManagerConfigData,
                 {
                     gasLimit: gasEstimate * 120n / 100n // 增加 20% 緩衝
                 }
@@ -172,7 +209,7 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
         } finally {
             setIsLoading(false);
         }
-    }, [formData, signer, account]);
+    }, [formData, signer, account, buildFeeManagerConfigData]);
 
     const renderStepContent = () => {
         if (successInfo) {
@@ -270,6 +307,39 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
                                <h3 className="text-lg font-semibold text-white">Charge Entrance Fee</h3>
                                <ToggleSwitch enabled={formData.entranceFeeEnabled} onChange={(val) => handleToggleChange('entranceFeeEnabled', val)} />
                             </div>
+                            {formData.entranceFeeEnabled && (
+                                <div className="mt-4 space-y-4">
+                                    <div className="p-3 bg-slate-900 border border-slate-700 rounded-lg">
+                                        <p className="text-sm text-slate-400 mb-2">If enabled, entrance fees are charged with every new deposit.</p>
+                                        <p className="text-sm text-slate-400">
+                                            The fee recipient is the vault manager by default, or any other wallet. 
+                                            If you wish to split fee amounts among several wallets, please contact our sales team at support@enzyme.finance.
+                                        </p>
+                                        <span className="inline-block text-orange-400 text-xs font-medium px-2 py-1 bg-orange-900/30 border border-orange-700 rounded-full mt-2">
+                                            Semi-permanent Setting
+                                        </span>
+                                    </div>
+                                    <Input 
+                                        label="Entrance Fee Rate (%)" 
+                                        name="entranceFeeRate" 
+                                        type="number" 
+                                        step="0.01"
+                                        min="0"
+                                        max="100"
+                                        value={formData.entranceFeeRate} 
+                                        onChange={handleInputChange} 
+                                        description="Fee percentage charged on each deposit (e.g., 1 for 1%)" 
+                                    />
+                                    <Input 
+                                        label="Recipient Address (optional)" 
+                                        name="entranceFeeRecipient" 
+                                        value={formData.entranceFeeRecipient} 
+                                        onChange={handleInputChange} 
+                                        placeholder="Enter address ..."
+                                        description="By default, the fee recipient is the vault owner"
+                                    />
+                                </div>
+                            )}
                         </div>
                         <div>
                             <div className="flex justify-between items-center">
