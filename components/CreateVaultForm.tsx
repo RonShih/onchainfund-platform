@@ -50,24 +50,49 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
 
     // 管理白名單地址
     const addWhitelistAddress = (address: string) => {
-        if (address && ethers.isAddress(address)) {
-            // 統一轉為 checksum 格式
-            const checksumAddress = ethers.getAddress(address);
-            
-            // 檢查是否已存在（使用 checksum 比較）
-            if (!formData.whitelistAddresses.some(addr => 
-                ethers.getAddress(addr) === checksumAddress
-            )) {
-                setFormData(prev => ({
-                    ...prev,
-                    whitelistAddresses: [...prev.whitelistAddresses, checksumAddress]
-                }));
-            } else {
-                console.log('地址已存在於白名單中:', checksumAddress);
-            }
-        } else {
-            console.log('無效地址:', address);
+        console.log('嘗試添加地址:', address);
+        
+        if (!address || address.trim() === '') {
+            console.log('地址為空，跳過');
+            return;
         }
+        
+        if (!ethers.isAddress(address)) {
+            console.log('無效地址:', address);
+            alert('無效地址，請輸入正確的以太坊地址');
+            return;
+        }
+        
+        // 統一轉為 checksum 格式
+        const checksumAddress = ethers.getAddress(address);
+        console.log('Checksum 地址:', checksumAddress);
+        
+        // 檢查是否已存在（使用 checksum 比較）
+        const exists = formData.whitelistAddresses.some(addr => {
+            try {
+                return ethers.getAddress(addr) === checksumAddress;
+            } catch {
+                return addr === address; // 備用比較
+            }
+        });
+        
+        if (exists) {
+            console.log('地址已存在於白名單中:', checksumAddress);
+            alert('此地址已存在於白名單中');
+            return;
+        }
+        
+        console.log('添加地址到白名單:', checksumAddress);
+        console.log('當前白名單:', formData.whitelistAddresses);
+        
+        setFormData(prev => {
+            const newWhitelist = [...prev.whitelistAddresses, checksumAddress];
+            console.log('新的白名單:', newWhitelist);
+            return {
+                ...prev,
+                whitelistAddresses: newWhitelist
+            };
+        });
     };
 
     const removeWhitelistAddress = (address: string) => {
@@ -410,9 +435,9 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
                                                                 type="button"
                                                                 onClick={() => removeWhitelistAddress(address)}
                                                                 className="text-red-400 hover:text-red-300 text-xs"
-                                                                disabled={address === account}
+                                                                disabled={ethers.getAddress(address) === ethers.getAddress(account)}
                                                             >
-                                                                {address === account ? 'Owner' : '×'}
+                                                                {ethers.getAddress(address) === ethers.getAddress(account) ? 'Owner' : '×'}
                                                             </button>
                                                         </div>
                                                     ))}
@@ -426,10 +451,14 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
                                                 type="text"
                                                 placeholder="Enter address ..."
                                                 value={newAddressInput}
-                                                onChange={(e) => setNewAddressInput(e.target.value)}
+                                                onChange={(e) => {
+                                                    console.log('輸入框值變更:', e.target.value);
+                                                    setNewAddressInput(e.target.value);
+                                                }}
                                                 className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white text-sm"
                                                 onKeyDown={(e) => {
                                                     if (e.key === 'Enter') {
+                                                        console.log('按下 Enter，添加地址:', newAddressInput.trim());
                                                         addWhitelistAddress(newAddressInput.trim());
                                                         setNewAddressInput('');
                                                     }
@@ -438,6 +467,7 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
                                             <button
                                                 type="button"
                                                 onClick={() => {
+                                                    console.log('按下 Add 按鈕，添加地址:', newAddressInput.trim());
                                                     addWhitelistAddress(newAddressInput.trim());
                                                     setNewAddressInput('');
                                                 }}

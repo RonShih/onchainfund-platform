@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => {
           interval: 1000
         },
         host: '0.0.0.0',
-        port: 5173,
+        port: 3302,
         strictPort: false,
         fs: {
           allow: ['..']
