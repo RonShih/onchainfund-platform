@@ -25,6 +25,8 @@ export type VaultData = {
   entranceFeeRate: number;
   entranceFeeRecipient: string;
   exitFeeEnabled: boolean;
+  depositWhitelistEnabled: boolean;
+  whitelistAddresses: string[];
 };
 
 export interface EthersError extends Error {

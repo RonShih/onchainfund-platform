@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { ethers, BrowserProvider, Log } from 'ethers';
 import { Input, Button, ToggleSwitch, Select } from './ui';
 import Stepper from './Stepper';
-import { CREATION_STEPS, FUND_FACTORY_ADDRESS, FUND_FACTORY_ABI, DENOMINATION_ASSETS, DEFAULT_DENOMINATION_ASSET, ENTRACE_RATE_DIRECT_FEE_ADDRESS } from '../constants';
+import { CREATION_STEPS, FUND_FACTORY_ADDRESS, FUND_FACTORY_ABI, DENOMINATION_ASSETS, DEFAULT_DENOMINATION_ASSET, ENTRACE_RATE_DIRECT_FEE_ADDRESS, ADDRESS_LIST_REGISTRY, ADDRESS_LIST_REGISTRY_ABI, ALLOWED_DEPOSIT_RECIPIENTS_POLICY_ADDRESS } from '../constants';
 import type { VaultData, EthersError } from '../types';
 
 interface CreateVaultFormProps {
@@ -18,7 +18,7 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
         name: '',
         symbol: '',
         denominationAsset: DEFAULT_DENOMINATION_ASSET, // 使用 ASVT 作為默認
-        sharesLockUp: 24,
+        sharesLockUp: 0,
         managementFeeEnabled: true,
         managementFeeRate: 1,
         performanceFeeEnabled: true,
@@ -27,10 +27,13 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
         entranceFeeRate: 1,
         entranceFeeRecipient: account,
         exitFeeEnabled: false,
+        depositWhitelistEnabled: false,
+        whitelistAddresses: [ethers.getAddress(account)], // 使用 checksum 格式
     });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [successInfo, setSuccessInfo] = useState<{ vault: string; comptroller: string } | null>(null);
+    const [newAddressInput, setNewAddressInput] = useState('');
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value, type, checked } = e.target;
@@ -43,6 +46,35 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
     
     const handleToggleChange = (name: keyof VaultData, enabled: boolean) => {
         setFormData(prev => ({ ...prev, [name]: enabled }));
+    };
+
+    // 管理白名單地址
+    const addWhitelistAddress = (address: string) => {
+        if (address && ethers.isAddress(address)) {
+            // 統一轉為 checksum 格式
+            const checksumAddress = ethers.getAddress(address);
+            
+            // 檢查是否已存在（使用 checksum 比較）
+            if (!formData.whitelistAddresses.some(addr => 
+                ethers.getAddress(addr) === checksumAddress
+            )) {
+                setFormData(prev => ({
+                    ...prev,
+                    whitelistAddresses: [...prev.whitelistAddresses, checksumAddress]
+                }));
+            } else {
+                console.log('地址已存在於白名單中:', checksumAddress);
+            }
+        } else {
+            console.log('無效地址:', address);
+        }
+    };
+
+    const removeWhitelistAddress = (address: string) => {
+        setFormData(prev => ({
+            ...prev,
+            whitelistAddresses: prev.whitelistAddresses.filter(addr => addr !== address)
+        }));
     };
 
     // 構建 FeeManager 配置數據
@@ -74,6 +106,61 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
         }
     }, [formData.entranceFeeEnabled, formData.entranceFeeRate, formData.entranceFeeRecipient, account]);
 
+    // 構建 PolicyManager 配置數據
+    const buildPolicyManagerConfigData = useCallback(async () => {
+        if (!formData.depositWhitelistEnabled || formData.whitelistAddresses.length === 0) {
+            return '0x';
+        }
+
+        try {
+            // 1. 先創建地址列表
+            const addressListRegistry = new ethers.Contract(ADDRESS_LIST_REGISTRY, ADDRESS_LIST_REGISTRY_ABI, signer);
+            
+            console.log('創建白名單列表...', formData.whitelistAddresses);
+            
+            // 方法1: 先用 staticCall 獲取會返回的 listId
+            const listId = await addressListRegistry.createList.staticCall(
+                account,  // owner
+                0,        // UpdateType.None
+                formData.whitelistAddresses
+            );
+            
+            console.log('預期獲得的 listId:', listId.toString());
+            
+            // 方法2: 實際執行交易
+            const createListTx = await addressListRegistry.createList(
+                account,  // owner
+                0,        // UpdateType.None
+                formData.whitelistAddresses
+            );
+            
+            const receipt = await createListTx.wait();
+            console.log('列表創建交易確認:', receipt);
+            console.log('實際使用的 listId:', listId.toString());
+            
+            // 2. 構建 AllowedDepositRecipientsPolicy 設定
+            const policySettingsData = ethers.AbiCoder.defaultAbiCoder().encode(
+                ['uint256[]', 'bytes[]'],
+                [[listId], []]  // existingListIds, newListsData
+            );
+            
+            console.log('策略設定數據:', policySettingsData);
+            
+            // 3. 構建 PolicyManager 配置
+            const policyManagerConfigData = ethers.AbiCoder.defaultAbiCoder().encode(
+                ['address[]', 'bytes[]'],
+                [[ALLOWED_DEPOSIT_RECIPIENTS_POLICY_ADDRESS], [policySettingsData]]
+            );
+            
+            console.log('最終 PolicyManager 配置:', policyManagerConfigData);
+            
+            return policyManagerConfigData;
+        } catch (error) {
+            console.error('構建策略配置時出錯:', error);
+            return '0x';
+        }
+    }, [formData.depositWhitelistEnabled, formData.whitelistAddresses, signer, account]);
+
     const handleCreateVault = useCallback(async () => {
         console.log('開始創建金庫...');
         console.log('表單數據:', formData);
@@ -97,9 +184,10 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
 
             // 構建費用配置數據
             const feeManagerConfigData = buildFeeManagerConfigData();
-            const policyManagerConfigData = '0x'; // 暫時保持為空
+            const policyManagerConfigData = await buildPolicyManagerConfigData();
             
             console.log('費用配置數據:', feeManagerConfigData);
+            console.log('策略配置數據:', policyManagerConfigData);
             
             console.log('創建合約調用...');
             console.log('Factory 地址:', FUND_FACTORY_ADDRESS);
@@ -209,7 +297,7 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
         } finally {
             setIsLoading(false);
         }
-    }, [formData, signer, account, buildFeeManagerConfigData]);
+    }, [formData, signer, account, buildFeeManagerConfigData, buildPolicyManagerConfigData]);
 
     const renderStepContent = () => {
         if (successInfo) {
@@ -282,6 +370,90 @@ export default function CreateVaultForm({ signer, account, onBack }: CreateVault
                                     Selected: {DENOMINATION_ASSETS.find(asset => asset.address === formData.denominationAsset)?.name || 'Unknown Asset'}
                                 </p>
                             </div>
+                        </div>
+                    </div>
+                );
+            case 4: // Deposits
+                return (
+                    <div className="space-y-8">
+                        <div>
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-lg font-semibold text-white">Limit Wallets Permitted To Deposit</h3>
+                                <ToggleSwitch 
+                                    enabled={formData.depositWhitelistEnabled} 
+                                    onChange={(val) => handleToggleChange('depositWhitelistEnabled', val)} 
+                                />
+                            </div>
+                            {formData.depositWhitelistEnabled && (
+                                <div className="mt-4 space-y-4">
+                                    <div className="p-3 bg-slate-900 border border-slate-700 rounded-lg">
+                                        <p className="text-sm text-slate-400 mb-2">
+                                            This policy acts in concert with but not as a replacement for the policy restricting wallets permitted to receive a share transfer. 
+                                            For example, if you enable this policy but allow your vault shares to be freely transferrable, 
+                                            you will limit access to new shares but not to existing ones.
+                                        </p>
+                                        <span className="inline-block text-green-400 text-xs font-medium px-2 py-1 bg-green-900/30 border border-green-700 rounded-full mt-2">
+                                            Editable Setting
+                                        </span>
+                                    </div>
+                                    <div className="border border-blue-500 rounded-lg p-4">
+                                        <h4 className="text-white font-medium mb-3">Limit Wallets Permitted To Deposit</h4>
+                                        
+                                        {/* 現有地址列表 */}
+                                        {formData.whitelistAddresses.length > 0 && (
+                                            <div className="mb-4">
+                                                <div className="space-y-2">
+                                                    {formData.whitelistAddresses.map((address, index) => (
+                                                        <div key={index} className="flex items-center justify-between bg-slate-800 p-2 rounded">
+                                                            <span className="text-sm text-slate-300 font-mono">{address}</span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => removeWhitelistAddress(address)}
+                                                                className="text-red-400 hover:text-red-300 text-xs"
+                                                                disabled={address === account}
+                                                            >
+                                                                {address === account ? 'Owner' : '×'}
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {/* 添加新地址 */}
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                placeholder="Enter address ..."
+                                                value={newAddressInput}
+                                                onChange={(e) => setNewAddressInput(e.target.value)}
+                                                className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white text-sm"
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        addWhitelistAddress(newAddressInput.trim());
+                                                        setNewAddressInput('');
+                                                    }
+                                                }}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    addWhitelistAddress(newAddressInput.trim());
+                                                    setNewAddressInput('');
+                                                }}
+                                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm"
+                                            >
+                                                Add
+                                            </button>
+                                        </div>
+                                        
+                                        <div className="flex justify-between items-center mt-3">
+                                            <span className="text-xs text-slate-400">Add Owner Wallet</span>
+                                            <span className="text-xs text-red-400">Required</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 );

@@ -1,4 +1,5 @@
 export const FUND_FACTORY_ADDRESS = '0x9D2C19a267caDA33da70d74aaBF9d2f75D3CdC14';
+export const ADDRESS_LIST_REGISTRY = '0x6D0b3882dF46A81D42cCce070ce5E46ea26BAcA5';
 export const ENTRACE_RATE_DIRECT_FEE_ADDRESS = '0xA7259E45c7Be47a5bED94EDc252FADB09769a326';
 export const ALLOWED_DEPOSIT_RECIPIENTS_POLICY_ADDRESS = '0x0eD7E38C4535989e392843884326925B4469EB5A';
 
@@ -69,6 +70,13 @@ export const ERC20_ABI = [
     'function allowance(address owner, address spender) view returns (uint256)',
     'function approve(address spender, uint256 amount) returns (bool)',
     'function transfer(address to, uint256 amount) returns (bool)'
+];
+
+export const ADDRESS_LIST_REGISTRY_ABI = [
+    'function createList(address owner, uint8 updateType, address[] initialItems) returns (uint256 id)',
+    'function getListOwner(uint256 id) view returns (address)',
+    'function getListItems(uint256 id) view returns (address[])',
+    'function areAllInList(uint256 id, address[] items) view returns (bool)'
 ];
 
 export const CREATION_STEPS = [
