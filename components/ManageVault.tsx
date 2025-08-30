@@ -9,6 +9,8 @@ interface ManageVaultProps {
     signer: ethers.Signer;
     account: string;
     onBack: () => void;
+    onNavigateToSwap?: (vaultData: {address: string, name: string}) => void;
+    initialVaultAddress?: string;
 }
 
 interface VaultInfo {
@@ -35,8 +37,8 @@ const Spinner = () => (
     </svg>
 );
 
-export default function ManageVault({ provider, signer, account, onBack }: ManageVaultProps) {
-    const [vaultAddress, setVaultAddress] = useState('');
+export default function ManageVault({ provider, signer, account, onBack, onNavigateToSwap, initialVaultAddress = '' }: ManageVaultProps) {
+    const [vaultAddress, setVaultAddress] = useState(initialVaultAddress);
     const [vaultInfo, setVaultInfo] = useState<VaultInfo | null>(null);
     
     const [depositAmount, setDepositAmount] = useState('');
@@ -126,6 +128,13 @@ export default function ManageVault({ provider, signer, account, onBack }: Manag
         }
         setIsLoading(false);
     }, [vaultAddress, provider, account]);
+
+    // 當 initialVaultAddress 改變時更新 vaultAddress
+    useEffect(() => {
+        if (initialVaultAddress && initialVaultAddress !== vaultAddress) {
+            setVaultAddress(initialVaultAddress);
+        }
+    }, [initialVaultAddress]);
 
     useEffect(() => {
         if (vaultAddress) {
@@ -354,7 +363,17 @@ export default function ManageVault({ provider, signer, account, onBack }: Manag
                     <div className="mt-8 space-y-8">
                         {/* 金庫資訊總覽 */}
                         <div className="bg-slate-900 p-6 rounded-lg">
-                            <h3 className="text-xl font-bold text-white mb-4">📊 金庫資訊</h3>
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-xl font-bold text-white">📊 金庫資訊</h3>
+                                {onNavigateToSwap && (
+                                    <button
+                                        onClick={() => onNavigateToSwap({address: vaultAddress, name: vaultInfo.name})}
+                                        className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center"
+                                    >
+                                        🔄 Uniswap
+                                    </button>
+                                )}
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="text-center">
                                     <div className="text-sm text-slate-400">基金名稱</div>

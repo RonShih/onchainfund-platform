@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ethers, BrowserProvider } from 'ethers';
 import CreateVaultForm from './components/CreateVaultForm';
 import ManageVault from './components/ManageVault';
+import SwapPage from './components/SwapPage';
 import { Card } from './components/ui';
 import type { EthersError } from './types';
 
@@ -22,8 +23,10 @@ export default function App() {
     const [account, setAccount] = useState<string | null>(null);
     const [provider, setProvider] = useState<BrowserProvider | null>(null);
     const [signer, setSigner] = useState<ethers.Signer | null>(null);
-    const [view, setView] = useState<'home' | 'create' | 'manage'>('home');
-    const [pendingView, setPendingView] = useState<'create' | 'manage' | null>(null);
+    const [view, setView] = useState<'home' | 'create' | 'manage' | 'swap'>('home');
+    const [pendingView, setPendingView] = useState<'create' | 'manage' | 'swap' | null>(null);
+    const [swapVaultData, setSwapVaultData] = useState<{address: string, name: string} | null>(null);
+    const [currentVaultAddress, setCurrentVaultAddress] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
 
@@ -220,13 +223,21 @@ export default function App() {
         }
     }, [account, provider]);
 
-    const handleNavigation = (targetView: 'create' | 'manage') => {
+    const handleNavigation = (targetView: 'create' | 'manage' | 'swap', vaultData?: {address: string, name: string}) => {
         console.log('導航到:', targetView);
         if (account && provider) {
+            if (targetView === 'swap' && vaultData) {
+                setSwapVaultData(vaultData);
+                setCurrentVaultAddress(vaultData.address);
+            }
             setView(targetView);
         } else {
             if (!isLoading) {
                 setPendingView(targetView);
+                if (targetView === 'swap' && vaultData) {
+                    setSwapVaultData(vaultData);
+                    setCurrentVaultAddress(vaultData.address);
+                }
                 connectWallet();
             }
         }
@@ -290,7 +301,23 @@ export default function App() {
             case 'create':
                 return <CreateVaultForm provider={provider} signer={signer} account={account} onBack={() => setView('home')} />;
             case 'manage':
-                return <ManageVault provider={provider} signer={signer} account={account} onBack={() => setView('home')} />;
+                return <ManageVault 
+                    provider={provider} 
+                    signer={signer} 
+                    account={account} 
+                    onBack={() => setView('home')} 
+                    onNavigateToSwap={(vaultData) => handleNavigation('swap', vaultData)}
+                    initialVaultAddress={currentVaultAddress}
+                />;
+            case 'swap':
+                return <SwapPage 
+                    provider={provider} 
+                    signer={signer} 
+                    account={account} 
+                    vaultAddress={swapVaultData?.address}
+                    vaultName={swapVaultData?.name}
+                    onBack={() => setView('manage')} 
+                />;
             case 'home':
             default:
                 return <Home />;
