@@ -9,8 +9,19 @@ interface ManageVaultProps {
     signer: ethers.Signer;
     account: string;
     onBack: () => void;
-    onNavigateToSwap?: (vaultData: {address: string, name: string}) => void;
+    onNavigateToSwap?: (vaultData: {address: string, name: string, comptrollerAddress?: string}) => void;
     initialVaultAddress?: string;
+}
+
+interface TokenHolding {
+  address: string;
+  symbol: string;
+  name: string;
+  balance: string;
+  decimals: number;
+  price?: number;
+  value?: number;
+  allocation?: number;
 }
 
 interface VaultInfo {
@@ -24,7 +35,9 @@ interface VaultInfo {
         decimals: number;
     };
     gav: string;
+    customGav?: string; // 新增：自定義 GAV
     shareValue: string;
+    customShareValue?: string; // 新增：自定義 Share Value
     userShareBalance: string;
     userDenomBalance: string;
     userAllowance: string;
@@ -40,6 +53,8 @@ const Spinner = () => (
 export default function ManageVault({ provider, signer, account, onBack, onNavigateToSwap, initialVaultAddress = '' }: ManageVaultProps) {
     const [vaultAddress, setVaultAddress] = useState(initialVaultAddress);
     const [vaultInfo, setVaultInfo] = useState<VaultInfo | null>(null);
+    const [holdings, setHoldings] = useState<TokenHolding[]>([]);
+    const [portfolioLoading, setPortfolioLoading] = useState(false);
     
     const [depositAmount, setDepositAmount] = useState('');
     const [redeemAmount, setRedeemAmount] = useState('');
@@ -50,6 +65,134 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
     const [isRedeeming, setIsRedeeming] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
+
+    const fetchPortfolioData = useCallback(async () => {
+        if (!vaultAddress || !provider) return;
+        
+        setPortfolioLoading(true);
+        try {
+            const portfolioHoldings: TokenHolding[] = [];
+            
+            // 獲取主要代幣餘額
+            const tokens = [
+                { address: TOKEN_ADDRESSES.ASVT, symbol: 'ASVT', name: 'ASVT Token', decimals: 18 },
+                { address: TOKEN_ADDRESSES.WETH, symbol: 'WETH', name: 'Wrapped Ether', decimals: 18 },
+                { address: TOKEN_ADDRESSES.USDC, symbol: 'USDC', name: 'USD Coin', decimals: 6 }
+            ];
+
+            for (const token of tokens) {
+                try {
+                    const tokenContract = new ethers.Contract(token.address, ERC20_ABI, provider);
+                    const balance = await tokenContract.balanceOf(vaultAddress);
+                    const balanceFormatted = formatUnits(balance, token.decimals);
+                    
+                    // 只顯示有餘額的代幣 (> 0.000001)
+                    if (parseFloat(balanceFormatted) > 0.000001) {
+                        portfolioHoldings.push({
+                            ...token,
+                            balance: balanceFormatted
+                        });
+                    }
+                } catch (error) {
+                    console.warn(`獲取 ${token.symbol} 餘額失敗:`, error);
+                }
+            }
+
+            setHoldings(portfolioHoldings);
+        } catch (error) {
+            console.error('獲取 Portfolio 失敗:', error);
+        } finally {
+            setPortfolioLoading(false);
+        }
+    }, [vaultAddress, provider]);
+
+    // 新增：獲取 Uniswap Pool 價格並計算自定義 GAV
+    const calculateCustomGAV = useCallback(async (vaultAddr: string) => {
+        if (!provider || !vaultAddr) return null;
+        
+        try {
+            console.log('🔍 開始計算自定義 GAV...');
+            
+            // 1. 獲取金庫中的 ASVT 和 WETH 餘額
+            const asvtContract = new ethers.Contract(TOKEN_ADDRESSES.ASVT, ERC20_ABI, provider);
+            const wethContract = new ethers.Contract(TOKEN_ADDRESSES.WETH, ERC20_ABI, provider);
+            
+            const [asvtBalance, wethBalance] = await Promise.all([
+                asvtContract.balanceOf(vaultAddr),
+                wethContract.balanceOf(vaultAddr)
+            ]);
+            
+            const asvtBalanceFormatted = parseFloat(formatUnits(asvtBalance, 18));
+            const wethBalanceFormatted = parseFloat(formatUnits(wethBalance, 18));
+            
+            console.log('💰 金庫資產:', { asvtBalanceFormatted, wethBalanceFormatted });
+            
+            // 2. 如果只有 ASVT，直接返回
+            if (wethBalanceFormatted <= 0.000001) {
+                const customGav = asvtBalanceFormatted;
+                console.log('✅ 只有 ASVT，GAV:', customGav);
+                return {
+                    customGav: customGav.toFixed(6),
+                    wethPrice: 0
+                };
+            }
+            
+            // 3. 從你的 Pool 獲取 WETH 價格 (以 ASVT 計價)
+            const poolAddress = "0x9dA90247B544fF9103C5B3909dE1B87c4487ae46"; // 你的正確 pool
+            const poolAbi = [
+                'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+                'function token0() view returns (address)',
+                'function token1() view returns (address)'
+            ];
+            
+            const poolContract = new ethers.Contract(poolAddress, poolAbi, provider);
+            const [reserves, token0, token1] = await Promise.all([
+                poolContract.getReserves(),
+                poolContract.token0(),
+                poolContract.token1()
+            ]);
+            
+            let asvtReserve: bigint, wethReserve: bigint;
+            if (token0.toLowerCase() === TOKEN_ADDRESSES.ASVT.toLowerCase()) {
+                asvtReserve = reserves[0];
+                wethReserve = reserves[1];
+            } else {
+                asvtReserve = reserves[1];
+                wethReserve = reserves[0];
+            }
+            
+            // 計算價格: 1 WETH = ? ASVT
+            const asvtReserveFormatted = parseFloat(formatUnits(asvtReserve, 18));
+            const wethReserveFormatted = parseFloat(formatUnits(wethReserve, 18));
+            const wethPriceInASVT = asvtReserveFormatted / wethReserveFormatted;
+            
+            console.log('🏊 Pool 資訊:', {
+                asvtReserve: asvtReserveFormatted,
+                wethReserve: wethReserveFormatted,
+                wethPriceInASVT
+            });
+            
+            // 4. 計算總 GAV
+            const wethValueInASVT = wethBalanceFormatted * wethPriceInASVT;
+            const customGav = asvtBalanceFormatted + wethValueInASVT;
+            
+            console.log('✅ 自定義 GAV 計算:', {
+                asvtValue: asvtBalanceFormatted,
+                wethValueInASVT,
+                customGav
+            });
+            
+            return {
+                customGav: customGav.toFixed(6),
+                wethPrice: wethPriceInASVT
+            };
+            
+        } catch (error) {
+            console.error('😱 計算自定義 GAV 失敗:', error);
+            console.warn('⚠️  Pool 地址可能不正確:', '0x9dA90247B544fF9103C5B3909dE1B87c4487ae46');
+            return null;
+        }
+    }, [provider]);
 
     const fetchVaultData = useCallback(async () => {
         if (!isAddress(vaultAddress)) {
@@ -74,13 +217,22 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
             
             console.log('Vault 基本資訊:', { compAddress, vaultName, vaultSymbol });
 
-            // 獲取 Comptroller 資訊
+            // 獲取 Comptroller 資訊 - 增加錯誤處理
             const comptrollerContract = new ethers.Contract(compAddress, COMPTROLLER_ABI, provider);
-            const [denomAddress, gavBN, shareValueBN] = await Promise.all([
-                comptrollerContract.getDenominationAsset(),
-                comptrollerContract.calcGav(),
-                comptrollerContract.calcGrossShareValue()
-            ]);
+            let denomAddress, gavBN, shareValueBN;
+            
+            try {
+                [denomAddress, gavBN, shareValueBN] = await Promise.all([
+                    comptrollerContract.getDenominationAsset(),
+                    comptrollerContract.calcGav(),
+                    comptrollerContract.calcGrossShareValue()
+                ]);
+            } catch (calcError) {
+                console.warn('計算 GAV/ShareValue 失敗，使用預設值:', calcError);
+                denomAddress = await comptrollerContract.getDenominationAsset();
+                gavBN = 0n; // 預設值
+                shareValueBN = ethers.parseUnits('1', 18); // 預設為 1
+            }
             
             console.log('計價資產地址:', denomAddress);
             
@@ -117,6 +269,18 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
                 userAllowance: formatUnits(userAllowanceBN, denomDecimals)
             };
             
+            // 計算自定義 GAV
+            const customGavResult = await calculateCustomGAV(vaultAddress);
+            if (customGavResult) {
+                vaultData.customGav = customGavResult.customGav;
+                // 計算自定義 Share Value = Custom GAV / Total Supply
+                const totalSupplyNum = parseFloat(formatUnits(totalSupply, 18));
+                if (totalSupplyNum > 0) {
+                    const customShareValue = parseFloat(customGavResult.customGav) / totalSupplyNum;
+                    vaultData.customShareValue = customShareValue.toFixed(6);
+                }
+            }
+            
             console.log('完整金庫資料:', vaultData);
             setVaultInfo(vaultData);
 
@@ -127,7 +291,7 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
             setVaultInfo(null);
         }
         setIsLoading(false);
-    }, [vaultAddress, provider, account]);
+    }, [vaultAddress, provider, account, calculateCustomGAV]);
 
     // 當 initialVaultAddress 改變時更新 vaultAddress
     useEffect(() => {
@@ -139,8 +303,9 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
     useEffect(() => {
         if (vaultAddress) {
             fetchVaultData();
+            fetchPortfolioData();
         }
-    }, [fetchVaultData]);
+    }, [fetchVaultData, fetchPortfolioData]);
 
     const handleApprove = async () => {
         if (!vaultInfo || !depositAmount) return;
@@ -232,6 +397,7 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
             
             // 重新載入數據
             fetchVaultData();
+            fetchPortfolioData();
             
         } catch (e) {
             const err = e as EthersError;
@@ -303,6 +469,7 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
             
             // 重新載入數據
             fetchVaultData();
+            fetchPortfolioData();
             
         } catch(e) {
             const err = e as EthersError;
@@ -367,7 +534,7 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
                                 <h3 className="text-xl font-bold text-white">📊 金庫資訊</h3>
                                 {onNavigateToSwap && (
                                     <button
-                                        onClick={() => onNavigateToSwap({address: vaultAddress, name: vaultInfo.name})}
+                                        onClick={() => onNavigateToSwap({address: vaultAddress, name: vaultInfo.name, comptrollerAddress: vaultInfo.comptrollerAddress})}
                                         className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center"
                                     >
                                         🔄 Uniswap
@@ -383,13 +550,30 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
                                 <div className="text-center">
                                     <div className="text-sm text-slate-400">總資產價值 (GAV)</div>
                                     <div className="text-lg font-bold text-emerald-400">
-                                        {parseFloat(vaultInfo.gav).toFixed(4)} {vaultInfo.denominationAsset.symbol}
+                                        {vaultInfo.customGav ? (
+                                            <>
+                                                <span className="text-green-300">{vaultInfo.customGav}</span>
+                                                <span className="text-xs text-slate-500 ml-2">(自定義)</span>
+                                            </>
+                                        ) : (
+                                            <span className="text-red-400">計算失敗</span>
+                                        )}
+                                        <div className="text-xs text-slate-500 mt-1">
+                                            原始: {parseFloat(vaultInfo.gav).toFixed(4)} {vaultInfo.denominationAsset.symbol}
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="text-center">
                                     <div className="text-sm text-slate-400">股份價值</div>
                                     <div className="text-lg font-bold text-blue-400">
-                                        {parseFloat(vaultInfo.shareValue).toFixed(6)}
+                                        {vaultInfo.customShareValue ? (
+                                            <>
+                                                <span className="text-blue-300">{vaultInfo.customShareValue}</span>
+                                                <span className="text-xs text-slate-500 ml-2">(自定義)</span>
+                                            </>
+                                        ) : (
+                                            <span>{parseFloat(vaultInfo.shareValue).toFixed(6)}</span>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="text-center">
@@ -401,7 +585,70 @@ export default function ManageVault({ provider, signer, account, onBack, onNavig
                             </div>
                         </div>
 
-                        {/* 用戶資產資訊 */}
+                        {/* 新增：Portfolio 資產組合 */}
+                        <div className="bg-slate-900 p-6 rounded-lg">
+                            <h3 className="text-xl font-bold text-white mb-4">📊 資產組合 (Token Holdings)</h3>
+                            
+                            {portfolioLoading ? (
+                                <div className="flex items-center justify-center py-8">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                                    <span className="ml-2 text-slate-400">載入中...</span>
+                                </div>
+                            ) : holdings.length === 0 ? (
+                                <div className="text-center py-8 text-slate-400">
+                                    <p>暫無資產持有記錄</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {holdings.map((holding, index) => (
+                                        <div key={holding.address} className="flex items-center justify-between p-4 bg-slate-800 rounded-lg">
+                                            <div className="flex items-center space-x-3">
+                                                <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
+                                                    <span className="text-white font-bold text-sm">
+                                                        {holding.symbol.charAt(0)}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <div className="text-white font-semibold">{holding.symbol}</div>
+                                                    <div className="text-sm text-slate-400">{holding.name}</div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="text-right">
+                                                <div className="text-white font-semibold">
+                                                    {parseFloat(holding.balance).toFixed(holding.decimals === 18 ? 6 : 2)}
+                                                </div>
+                                                <div className="text-sm text-slate-400">
+                                                    Balance
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="text-right">
+                                                <div className="text-purple-400 font-semibold">
+                                                    {((parseFloat(holding.balance) / holdings.reduce((sum, h) => sum + parseFloat(h.balance), 0)) * 100).toFixed(1)}%
+                                                </div>
+                                                <div className="text-sm text-slate-400">
+                                                    Allocation*
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    
+                                    <div className="mt-4 p-4 bg-gradient-to-r from-green-900/20 to-blue-900/20 border border-green-700/30 rounded-lg">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-slate-300">總持有代幣:</span>
+                                            <span className="text-green-400 font-bold">{holdings.length} 種類</span>
+                                        </div>
+                                        <div className="text-xs text-slate-500 mt-2">
+                                            <p>* Allocation 為簡化計算，不同代幣單位不同</p>
+                                            <p>💵 需要 Price Feed 才能顯示真實價值分配</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* 原有的用戶資產資訊 */}
                         <div className="bg-slate-900 p-6 rounded-lg">
                             <h3 className="text-xl font-bold text-white mb-4">👤 您的資產</h3>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

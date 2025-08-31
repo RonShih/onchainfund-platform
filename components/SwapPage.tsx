@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ethers, BrowserProvider } from 'ethers';
+import UniswapTrade from './UniswapTrade';
 
 // SVG 圖標組件
 const ArrowLeftIcon = () => (
@@ -19,6 +20,7 @@ interface SwapPageProps {
   signer: ethers.Signer;
   account: string;
   vaultAddress?: string;
+  comptrollerAddress?: string;
   vaultName?: string;
   onBack: () => void;
 }
@@ -27,15 +29,47 @@ const SwapPage: React.FC<SwapPageProps> = ({
   provider,
   signer,
   account,
-  vaultAddress = "0x85b2163600d8AB297DC1C19658C6E15FB95178f0", 
-  vaultName = "aaa",
+  vaultAddress, 
+  comptrollerAddress,
+  vaultName,
   onBack 
 }) => {
+  const [showTrade, setShowTrade] = useState(false);
+  const [actualComptroller, setActualComptroller] = useState(comptrollerAddress);
+
+  useEffect(() => {
+    const getComptroller = async () => {
+      if (!comptrollerAddress && vaultAddress && signer) {
+        try {
+          const vaultContract = new ethers.Contract(vaultAddress, ['function getAccessor() view returns (address)'], signer);
+          const addr = await vaultContract.getAccessor();
+          setActualComptroller(addr);
+        } catch (error) {
+          console.error('獲取 Comptroller 失敗:', error);
+        }
+      }
+    };
+    getComptroller();
+  }, [comptrollerAddress, vaultAddress, signer]);
+  console.log("Swap page comptrollerAddress:", comptrollerAddress);
   // 格式化地址顯示
   const formatAddress = (address: string) => {
     if (!address) return '';
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
+
+  if (showTrade) {
+    return (
+      <UniswapTrade
+        provider={provider}
+        signer={signer}
+        account={account}
+        comptrollerAddress={actualComptroller}
+        vaultProxyAddress={vaultAddress}
+        onBack={() => setShowTrade(false)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -83,7 +117,7 @@ const SwapPage: React.FC<SwapPageProps> = ({
           <div className="bg-slate-700 rounded-lg p-6 mb-6">
             <h3 className="text-lg font-semibold text-white mb-3">預計功能</h3>
             <ul className="text-slate-300 space-y-2 text-left max-w-md mx-auto">
-              <li>• WETH ↔ USDC 交易對</li>
+              <li>• ASVT ↔ WETH 交易對</li>
               <li>• 即時價格查詢</li>
               <li>• 滑點保護設定</li>
               <li>• 交易路由優化</li>
@@ -107,8 +141,15 @@ const SwapPage: React.FC<SwapPageProps> = ({
             </div>
           </div>
 
-          <div className="text-sm text-slate-500">
-            此功能正在開發中，將支援基金經理人進行資產交易管理...
+          <button 
+            onClick={() => setShowTrade(true)}
+            className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition-colors"
+          >
+            開始交易 ASVT/WETH
+          </button>
+          
+          <div className="text-sm text-slate-500 mt-4">
+            點擊上方按鈕開始進行代幣交換...
           </div>
 
           {/* 開發者資訊 */}

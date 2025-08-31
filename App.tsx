@@ -25,7 +25,7 @@ export default function App() {
     const [signer, setSigner] = useState<ethers.Signer | null>(null);
     const [view, setView] = useState<'home' | 'create' | 'manage' | 'swap'>('home');
     const [pendingView, setPendingView] = useState<'create' | 'manage' | 'swap' | null>(null);
-    const [swapVaultData, setSwapVaultData] = useState<{address: string, name: string} | null>(null);
+    const [swapVaultData, setSwapVaultData] = useState<{address: string, name: string, comptrollerAddress?: string} | null>(null);
     const [currentVaultAddress, setCurrentVaultAddress] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -223,7 +223,7 @@ export default function App() {
         }
     }, [account, provider]);
 
-    const handleNavigation = (targetView: 'create' | 'manage' | 'swap', vaultData?: {address: string, name: string}) => {
+    const handleNavigation = (targetView: 'create' | 'manage' | 'swap', vaultData?: {address: string, name: string, comptrollerAddress?: string}) => {
         console.log('導航到:', targetView);
         if (account && provider) {
             if (targetView === 'swap' && vaultData) {
@@ -315,6 +315,7 @@ export default function App() {
                     signer={signer} 
                     account={account} 
                     vaultAddress={swapVaultData?.address}
+                    comptrollerAddress={swapVaultData?.comptrollerAddress}
                     vaultName={swapVaultData?.name}
                     onBack={() => setView('manage')} 
                 />;

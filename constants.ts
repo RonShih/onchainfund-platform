@@ -2,11 +2,11 @@ export const FUND_FACTORY_ADDRESS = '0x9D2C19a267caDA33da70d74aaBF9d2f75D3CdC14'
 export const ADDRESS_LIST_REGISTRY = '0x6D0b3882dF46A81D42cCce070ce5E46ea26BAcA5';
 export const ENTRACE_RATE_DIRECT_FEE_ADDRESS = '0xA7259E45c7Be47a5bED94EDc252FADB09769a326';
 export const ALLOWED_DEPOSIT_RECIPIENTS_POLICY_ADDRESS = '0x0eD7E38C4535989e392843884326925B4469EB5A';
-
-
+export const INTEGRATION_MANAGER_ADDRESS = '0xA324963ED9c3124BB5b722a6790f67d72922F7a4';
+export const UNISWAP_V2_EXCHANGE_ADAPTER_ADDRESS = '0xb179bA4c1b407E24610b410bA383Aadc2e3B88Be';
 // Token addresses for Sepolia testnet
 export const TOKEN_ADDRESSES = {
-    ASVT: '0x932b08d5553b7431FB579cF27565c7Cd2d4b8fE0', // 正確的 ASVT 地址
+    ASVT: '0x932b08d5553b7431FB579cF27565c7Cd2d4b8fE0', // ASVT
     USDC: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', // Sepolia USDC
     WETH: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14', // Sepolia WETH
 };
@@ -59,7 +59,8 @@ export const COMPTROLLER_ABI = [
     'function calcGrossShareValue() view returns (uint256)',
     'function buyShares(uint256 investmentAmount, uint256 minSharesQuantity)',
     'function getDenominationAsset() view returns (address)',
-    'function redeemSharesInKind(address receiver, uint256 shareQuantity, address[] assetsToRedeem, address[] assetReceivers)'
+    'function redeemSharesInKind(address receiver, uint256 shareQuantity, address[] assetsToRedeem, address[] assetReceivers)',
+    'function callOnExtension(address _extension, uint256 _actionId, bytes calldata _callData)'
 ];
 
 export const ERC20_ABI = [
@@ -77,6 +78,10 @@ export const ADDRESS_LIST_REGISTRY_ABI = [
     'function getListOwner(uint256 id) view returns (address)',
     'function getListItems(uint256 id) view returns (address[])',
     'function areAllInList(uint256 id, address[] items) view returns (bool)'
+];
+
+export const uniswapAdapterAbi = [
+    "function takeOrder(address vaultProxy, bytes calldata actionData, bytes calldata assetData)"
 ];
 
 export const CREATION_STEPS = [
